@@ -1,0 +1,78 @@
+# Node
+node_modules/
+
+# database files
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Build / output
+dist/
+build/
+coverage/
+.nyc_output/
+out/
+
+# Environment files (do NOT commit secrets)
+.env
+.env.local
+.env.*.local
+env.sh
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.pdf
+
+# Misc
+.cache/
+tmp/
+temp/
+uploads/
+*.tgz
+sundry.txt
+
+# Optional: compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Keep an example env file in the repo
+!.env.example
+
+test-pg.js
+
+*.http
+session-storage issue.txt
+reset-password.txt
+notes.txt
+
+*.sqlite-shm
+*.sqlite-wal
+
+default
+riversidebridgeclub.com.conf
+
+# gimp files
+*.xcf
+*.eps
+*.svg

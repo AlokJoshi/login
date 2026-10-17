@@ -1,0 +1,354 @@
+require('dotenv').config({ quiet: true });
+const {db} = require('./db');
+const bcrypt = require('bcrypt');
+const sqlite = require('better-sqlite3');
+// Initialize the sqlite database connection
+// const db = new sqlite('mydb.sqlite', { verbose: console.log });
+// const db = new sqlite('mydb.sqlite');
+
+
+const admin_ids = process.env.ADMIN_IDS ? JSON.parse(process.env.ADMIN_IDS) : [];
+
+function isAdmin(userId) {
+    return admin_ids.includes(userId.toString());
+}
+
+function formatDateToYYYYMMDD(date) {
+  const year = date.getFullYear();
+  // getMonth() is 0-indexed, so add 1
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function userExists(username) {
+    try {
+        const stmt = db.prepare('SELECT id, username FROM player WHERE username = ?;');
+        const res = stmt.all(username);
+        const result = (res.length === 0) ? false : true;
+        return result;
+    } catch (err) {
+        console.error('Error fetching username:', err);
+        return false;
+    }
+}
+
+function addUser(username, password) {
+    const saltRounds = 10;
+    const hashedPassword = bcrypt.hashSync(password, saltRounds);
+    const stmt = db.prepare('INSERT INTO player (username, password) VALUES (?, ?);');
+    const result = stmt.run(username, hashedPassword);
+    return result;
+}
+
+// this function is async because bcrypt.compare is async
+async function login(username, password) {
+    const stmt = db.prepare('SELECT id, first, last, password FROM player WHERE username = ?');
+
+    const row = stmt.get(username);
+    if (!row) {
+        console.log('User not found.');
+        return { valid: false, message: 'User not found' };
+    }
+
+    const securelogin = (password === row.first.toLowerCase().trim() + row.id.toString()) ? false : true;
+
+    // Compare the provided password with the stored hash
+    const result = await bcrypt.compare(password, row.password);
+    if (result) {
+        console.log('Login successful! Passwords match.');
+        return { valid: true, id: row.id, securelogin, fullname: `${row.first} ${row.last}`, message: 'Login successful!' };
+    } else {
+        console.log('Invalid credentials. Passwords do not match.');
+        return { valid: false, message: 'Invalid credentials' };
+    }
+}
+
+async function passwordMatches(username, password) {
+    const stmt = db.prepare('SELECT id, first, last, password FROM player WHERE username = ?');
+
+    const row = stmt.get(username);
+    if (!row) {
+        return { valid: false, message: 'User not found' };
+    }
+
+    // Compare the provided password with the stored hash
+    const result = await bcrypt.compare(password, row.password);
+    return result ? { valid: true, id: row.id, message: 'Old Password matches' } : { valid: false, message: 'Old Password does not match' };
+}
+
+async function changePassword(username, newPassword) {
+    try {
+        const saltRounds = 10;
+        const hashedNewPassword = bcrypt.hashSync(newPassword, saltRounds);
+        const updateStmt = db.prepare('UPDATE player SET password = ? WHERE username = ?');
+        updateStmt.run(hashedNewPassword, username);
+        return true;
+    } catch (err) {
+        console.error('Error changing password:', err);
+        return false;
+    }
+}
+
+const bulkregister = (users) => {
+    // users is an array of objects with first and last properties
+    const registered = [];
+    users.forEach(user => {
+        const result = register(user.first, user.last);
+        registered.push({ first: user.first, last: user.last, ...result });
+    });
+    return registered;
+}
+
+const register = (first, last, username) => {
+    // since only members can register and use this app,
+    // we add the first and last name and username
+    // to the player table. After adding the user we get their id and use that
+    // to construct their temporary password (first + id). This is returned back to the app
+    // which displays it to the admin user so they can inform the member of their temporary credentials.
+    try {
+        //check if username already exists
+        const existingUser = userExists(username);
+        if (existingUser) {
+            console.error('Username already exists:', username);
+            return { error: 'Username already exists' };
+        }
+        const stmt = db.prepare('INSERT INTO player (first, last, username) VALUES (?, ?, ?) returning id;');
+        const id = stmt.get(first.trim(), last.trim(), username).id;
+        const tempPassword = first.trim().toLowerCase() + id.toString();
+        const saltRounds = 10;
+        const hashedPassword = bcrypt.hashSync(tempPassword, saltRounds);
+        const updateStmt = db.prepare('UPDATE player SET password = ? WHERE id = ?;');
+        updateStmt.run(hashedPassword, id);
+        return { username: username, tempPassword: tempPassword }
+    } catch (err) {
+        console.error('Error registering user:', err);
+    }
+}
+
+const registeredUsers = () => {
+    try {
+        const stmt = db.prepare('SELECT id, first, last, username FROM player WHERE username IS NOT NULL order by last, first;');
+        return stmt.all();
+    } catch (err) {
+        console.error('Error fetching registered users:', err);
+        return [];
+    }
+}
+
+function shuffle(array) {
+    let currentIndex = array.length, randomIndex;
+
+    // While there remain elements to shuffle.
+    while (currentIndex != 0) {
+
+        // Pick a remaining element.
+        randomIndex = Math.floor(Math.random() * currentIndex);
+        currentIndex--;
+
+        // And swap it with the current element.
+        [array[currentIndex], array[randomIndex]] = [
+            array[randomIndex], array[currentIndex]];
+    }
+
+    return array;
+}
+
+function isPlayer(fullname, phone) {
+    try {
+        const first = fullname.split(' ')[0];
+        const last = fullname.split(' ')[1];
+        const stmt = db.prepare('SELECT * FROM player where lower(first) = ? AND lower(last) = ? AND phone = ?;');
+        const result = stmt.all(first, last, phone.replaceAll('-', ''));
+        console.log('isPlayer query result:', result);
+        let exists = result.length > 0 ? true : false;
+        return {
+            exists, id: exists ? result[0].id : null, username: exists ? result[0].username : null,
+            phone: exists ? result[0].phone : null,
+            fullname: exists ? result[0].first + ' ' + result[0].last : null,
+        };
+    } catch (err) {
+        console.error('Error checking isPlayer:', err);
+        return false;
+    }
+
+}
+
+function saveGuestInquiry(firstName, lastName, email, phone, acbl, visitDate, message) {
+    try {
+        const stmt = db.prepare('INSERT INTO guestinquiry (firstname, lastname, email, phone, acbl, visitdate, message) VALUES (?, ?, ?, ?, ?, ?, ?);');
+        stmt.run(firstName, lastName, email, phone, acbl, visitDate, message);
+        return true;
+    } catch (err) {
+        console.error('Error saving guest inquiry:', err);
+        return false;
+    } 
+}
+
+function getMailingListAddresses(listname) {
+    try {
+        const stmt = db.prepare(`select player.email from player inner join mailinglistdetails 
+            on player.id = mailinglistdetails.playerid inner join mailinglist on 
+            mailinglistdetails.mailinglistid = mailinglist.id where mailinglist.name = ?
+            and player.email IS NOT NULL and trim(player.email) != '';`);
+        const result = stmt.all(listname);
+        // console.log('Mailing list query result:', result);
+        return result.map(row => row.email).join(','); // return comma-separated string of email addresses
+    } catch (err) {
+        console.error('Error fetching mailing list addresses:', err);
+        return [];
+    }
+}
+
+function getMailingLists(listnme) {
+    try {
+        const stmt = db.prepare(`select * from mailinglist`);
+        const result = stmt.all();
+        // console.log('getMailingLists result:', result);
+        return result
+    } catch (err) {
+        console.error('Error fetching mailing lists:', err);
+        return [];
+    }
+}
+
+function deleteMailingList(listId) {
+    try {
+        const deleteDetailsStmt = db.prepare('DELETE FROM mailinglistdetails WHERE mailinglistid = ?;');
+        deleteDetailsStmt.run(listId);
+        const deleteListStmt = db.prepare('DELETE FROM mailinglist WHERE id = ?;');
+        deleteListStmt.run(listId);
+        return true;
+    } catch (err) {
+        console.error('Error deleting mailing list:', err);
+        return false;
+    }
+}
+function createMailingList(name, description) {
+    try {
+        const stmt = db.prepare('INSERT INTO mailinglist (name, description) VALUES (?, ?);');
+        stmt.run(name, description);
+        return true;
+    } catch (err) {
+        console.error('Error creating mailing list:', err);
+        return false;
+    }
+}
+function updateMailingList(id,name, description) {
+    try {
+        const stmt = db.prepare('UPDATE mailinglist SET name = ?, description = ? WHERE id = ?;');
+        stmt.run(name, description, id);
+        return true;
+    } catch (err) {
+        console.error('Error updating mailing list:', err);
+        return false;
+    }
+}
+
+function existsMailingList(name) {
+    try {
+        const stmt = db.prepare('SELECT * FROM mailinglist WHERE name = ?;');
+        const result = stmt.all(name);
+        return result.length > 0;
+    } catch (err) {
+        console.error('Error checking if mailing list exists:', err);
+        return false;
+    }
+}
+function getMailingListRecipients(listId) {
+    try {
+        const stmt = db.prepare(`SELECT mailinglistdetails.id as mailinglistdetailsid, CONCAT(player.first,' ',player.last) AS name, player.email FROM player INNER JOIN mailinglistdetails ON player.id = mailinglistdetails.playerid WHERE mailinglistdetails.mailinglistid = ? order by player.first, player.last;`);
+        const result = stmt.all(listId);
+        console.log('getMailingListRecipients result:', result);
+        return {success: true, recipients: result, message: 'Recipients fetched successfully'}; // return array of recipient objects with id and name);
+    } catch (err) {
+        console.error('Error fetching mailing list recipients:', err);
+        return {success: false, recipients: [], message: 'Error fetching recipients'};
+    }
+}
+
+function getMailingListEmails(listId) {
+    try {
+        const result = getMailingListRecipients(listId);
+        if (result.success) {
+            const emails = result.recipients.map(r => r.email).filter(email => email !== null && email !== undefined && email.trim() !== '');
+            return {success: true, emails: emails, message: 'Recipient emails fetched successfully'};
+        } else {
+            return {success: false, emails: [], message: 'Error fetching recipients'};
+        }
+    } catch (err) {
+        console.error('Error fetching mailing list emails:', err);
+        return {success: false, emails: [], message: 'Error fetching emails'};
+    }
+}
+
+function getNonMailingListRecipients(listId) {
+    try {
+        const stmt = db.prepare(`SELECT player.id as playerid, CONCAT(player.first,' ',player.last) AS name, player.email FROM player LEFT JOIN mailinglistdetails ON player.id = mailinglistdetails.playerid and mailinglistdetails.mailinglistid=? WHERE mailinglistdetails.mailinglistid IS NULL order by player.first, player.last;`);
+        const result = stmt.all(listId);
+        console.log('getNonMailingListRecipients result:', result);
+        return {success: true, recipients: result, message: 'Non Recipients fetched successfully'}; // return array of recipient objects with id and name);
+    } catch (err) {
+        console.error('Error fetching non-mailing list recipients:', err);
+        return {success: false, recipients: [], message: 'Error fetching recipients'};
+    }
+}
+
+function addRecipientToMailingList(listId, playerId) {
+    try {
+        const stmt = db.prepare('INSERT INTO mailinglistdetails (mailinglistid, playerid) VALUES (?, ?);'); 
+        stmt.run(listId, playerId);
+        return {success: true, message: 'Recipient added successfully'};
+    } catch (err) {
+        console.error('Error adding recipient to mailing list:', err);
+        return {success: false, message: 'Error adding recipient'};
+    }
+}
+function getPOTMWords() {
+    try {
+        const words = process.env.POTM_WORDS.split(',').map(word => word.trim());
+        return {success: true, words: words, message: 'POTM words fetched successfully'};
+    } catch (err) {
+        console.error('Error fetching POTM words:', err);
+        return {success: false, words: [], message: 'Error fetching POTM words'};
+    }
+}
+function getEmails(){
+    try{
+        const stmt = db.prepare(`Select emails.*, concat(player.first,' ',player.last) as sender from 
+            emails inner join player on emails.sentbyplayerid = player.id order by sentdate desc;`);
+        const result = stmt.all();
+        return {success: true, emails: result, message: 'Emails fetched successfully'};
+    } catch (err) {
+        console.error('Error fetching emails:', err);
+        return {success: false, emails: [], message: 'Error fetching emails'};      
+    }
+}
+
+module.exports = {
+    userExists,
+    addUser,
+    changePassword,
+    registeredUsers,
+    isAdmin,
+    isPlayer,
+    login,
+    register,
+    bulkregister,
+    passwordMatches,
+    saveGuestInquiry,
+    getMailingListAddresses,
+    getMailingLists,
+    deleteMailingList,
+    createMailingList,
+    existsMailingList,
+    updateMailingList,
+    getMailingListRecipients,
+    getMailingListEmails,
+    getNonMailingListRecipients,
+    addRecipientToMailingList,
+    formatDateToYYYYMMDD,
+    getPOTMWords,
+    getEmails
+}

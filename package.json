@@ -1,0 +1,42 @@
+{
+  "name": "login",
+  "version": "1.0.0",
+  "description": "Generic login system",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "rebuild": "npm rebuild bcrypt better-sqlite3",
+    "prepare:production": "npm run rebuild",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "keywords": [
+    "bridge",
+    "club",
+    "management",
+    "login",
+    "train",
+    "game",
+    "player"
+  ],
+  "author": "alok",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.962.0",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.6.2",
+    "connect-sqlite3": "^0.9.16",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-session": "^1.18.2",
+    "form-data": "^4.0.5",
+    "mailgun.js": "^12.7.0",
+    "multer": "^2.0.2",
+    "multer-s3": "^3.0.1",
+    "nodemailer": "^10.1.2"
+  }
+}
