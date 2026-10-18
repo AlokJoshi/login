@@ -152,7 +152,7 @@ app.get('/', (req, res) => {
 });
 
 // Members route
-app.get('/members', (req, res) => {
+app.get('/api/members', (req, res) => {
     try {
         req.session.insecurelogin = req.session.insecurelogin || false;
         req.session.securelogin = req.session.securelogin || false;
